@@ -1,0 +1,47 @@
+{
+  "mod_version": "0.1.1",
+  "publication_date_utc": "2026-10-13",
+  "mod_executable_sha256": "EAD79FB263A6D397476F9DB9207D15DC7E1687B3DBE49AAA8A80FAD9FDDA4725",
+  "source_sha256": "70A58DE2C76B37E15EA0E2F229B11464DBF300E6D519F732E8E89A039A56ED07",
+  "build_script_sha256": "2A0E3F935A43B77D6D12A52E2CE2CD920D14431B5A431BD9D21D2A9AF4064DC9",
+  "source_and_script_match_original_final_package": true,
+  "self_test": {
+    "state": "self_test_passed",
+    "timestamp_utc": "20261013-072559",
+    "checks_passed": 13,
+    "checks": [
+      "all 256 camera values: only mode 2 acceptance changes at each gate",
+      "cross-process original context read",
+      "BCrypt full-file SHA256 matches the known abc test vector",
+      "unsupported computed full SHA256 rejected",
+      "supported full SHA256 accepted",
+      "preflight rejects unexpected immediate without partial writes",
+      "48-byte guard rejects modified branch instruction",
+      "injected write failure rolls back all bytes and page protections",
+      "partial protection restore failure reopens restored RX pages and rolls back safely",
+      "four remote one-byte writes, exact readback, and page protection restoration",
+      "A/B disable transaction restores all original guarded contexts",
+      "failure recovery preserves replacement bytes when surrounding code was rewritten",
+      "failure recovery restores owned bytes and preserves unexpected bytes"
+    ],
+    "game_launched": false
+  },
+  "installed_build_verification": {
+    "state": "static_verified",
+    "timestamp_utc": "20261013-072559",
+    "steam_build": "25201480",
+    "game_executable_sha256": "51510E2A520565DBE81FB0D569E95CD4393077ACAAA859371489B80B8128829F",
+    "static_verified": true,
+    "memory_patch_active": false,
+    "game_launched": false
+  },
+  "owner_report": {
+    "date": "2026-10-13",
+    "in_game_success_reported": true,
+    "successful_launcher_version_independently_established": false
+  },
+  "chase_view_gameplay_independently_observed_during_publication": false,
+  "on_disk_game_files_modified_by_publication": false,
+  "original_project_or_installed_mod_replaced": false,
+  "security_settings_changed": false
+}

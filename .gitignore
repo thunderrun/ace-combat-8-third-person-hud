@@ -1,0 +1,17 @@
+build/
+tools/
+work/
+outputs/
+logs/
+releases/
+*.obj
+*.pdb
+*.ilk
+*.log
+*.sav
+*.pak
+*.utoc
+*.ucas
+*.uasset
+*.umap
+AceCombat8.exe
