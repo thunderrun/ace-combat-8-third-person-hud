@@ -1,108 +1,71 @@
-# ACE COMBAT 8 Third-Person HUD
+# ACE COMBAT 8 Startup Skip + Third-Person HUD
 
-A Windows x64 launcher that keeps the game's native first-person flight
-instruments updating in third-person chase view: pitch ladder, compass,
-speed/altitude tapes, and aircraft reference mark.
+A Windows x64 launcher that skips the startup notice sequence and keeps the game's native flight instruments updating in third-person chase view. Version **0.2.0** combines both features in one launch; startup skip alone is available with `--no-hud`.
 
-The screenshot below was captured in Free Flight on 2026-10-13 using v0.1.1
-on the supported Steam build. It shows the F/A-18C in third-person chase view
-with the pitch ladder, compass, speed/altitude tapes, and aircraft reference
-mark visible. See [validation](docs/VALIDATION.md) for the recorded checks
-and remaining visual tests.
+The v0.2.0 test reached the title screen and main menu, and the user confirmed that the startup logos were skipped. Both patches remained active through a normal exit with code 0. Flight HUD motion, alignment, and mission transitions have not been visually verified in v0.2.0. See [validation](docs/VALIDATION.md) for the evidence and remaining checks.
 
-![F/A-18C in third-person chase view with the native flight HUD enabled](docs/images/third-person-hud.jpg)
+![Native flight instruments visible in third-person chase view using v0.1.1](docs/images/third-person-hud.jpg)
 
-*Free Flight, San Salvacion North Coast. Original 3840 × 2160 Steam screenshot.*
+*Historical v0.1.1 screenshot: F/A-18C, Free Flight, San Salvacion North Coast, 13 October 2026. This still image demonstrates the earlier HUD version, not v0.2.0 gameplay.*
 
 ## Compatibility
 
-- Windows x64 and the Steam edition of ACE COMBAT 8.
-- Steam app **2288340**, build **25201480** only.
-- Supported `AceCombat8.exe`: **555,102,832 bytes**, SHA-256
-  `51510E2A520565DBE81FB0D569E95CD4393077ACAAA859371489B80B8128829F`.
-- Intended for offline campaign/single-player use. The launcher refuses
-  detected anti-cheat processes, modules, or a protected child process.
+- Windows x64, Steam app **2288340**, build **25201480** only.
+- Supported `AceCombat8.exe`: **555,102,832 bytes**, SHA-256 `51510E2A520565DBE81FB0D569E95CD4393077ACAAA859371489B80B8128829F`.
+- Offline campaign and single-player use. Detected anti-cheat processes or modules prevent launch or stop monitoring.
 
-The exact executable hash and instruction contexts are checked before any
-memory change. A different game update requires a new compatibility review.
+The full executable hash, PE layout, Steam build, and five instruction contexts are checked before starting the game. A game update needs a new compatibility review.
 
-## Download and install
+## Download and run
 
-Download the v0.1.1 ZIP from [Releases](https://github.com/thunderrun/ace-combat-8-third-person-hud/releases)
-and extract it into a separate writable folder. Open `dist/v0.1.1` inside the
-extracted folder to find the launcher and short instructions. The same launcher
-is available at `dist/v0.1.1/AC8ThirdPersonHUD.exe` in this repository.
+Download the v0.2.0 ZIP from [Releases](https://github.com/thunderrun/ace-combat-8-third-person-hud/releases) and extract it into a separate writable folder. The repository copy is under `dist/v0.2.0`.
 
-1. Close ACE COMBAT 8. Leave Steam running and signed in.
-2. Run `AC8ThirdPersonHUD.exe` from the extracted folder.
-3. Enter campaign or a single-player free mission and switch to chase view
-   using your configured camera-cycle control.
-4. Keep the launcher open until the game exits. While the game has focus,
-   **Ctrl+Alt+F8** toggles the HUD gates for comparison.
+1. Close ACE COMBAT 8 and let any previous mod launcher finish cleanup. Leave Steam running and signed in.
+2. Run `dist/v0.2.0/AC8NoIntroHUD.exe` or `dist/v0.2.0/Launch-Intro-and-HUD.cmd` for both features.
+3. Enter campaign or a single-player free mission and switch to chase view using your configured camera control.
+4. Keep the launcher open until the game exits. **Ctrl+Alt+F8** toggles only the four HUD changes while the game has focus; startup skip stays enabled.
 
-The default game path is
-`C:\Program Files (x86)\Steam\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\AceCombat8.exe`.
-For a different Steam library, use PowerShell:
+For startup skip alone, run `dist/v0.2.0/Launch-Intro-Only.cmd` or:
 
 ```powershell
-.\AC8ThirdPersonHUD.exe --game 'D:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\AceCombat8.exe'
+.\dist\v0.2.0\AC8NoIntroHUD.exe --no-hud
 ```
 
-No files need to be copied into the game folder. No UE4SS loader is required.
-Logs and status JSON are created in `logs` beside the launcher. Use
-`--output PATH` to choose another log directory.
+The default game location is the standard Steam library. For another library:
 
-## Disable and remove
+```powershell
+.\dist\v0.2.0\AC8NoIntroHUD.exe --game 'D:\SteamLibrary\steamapps\common\ACE COMBAT 8\Game\Binaries\Win64\AceCombat8.exe'
+```
 
-Exit the game, then close the launcher. Start the game normally through Steam
-to use the original HUD. Delete the extracted mod folder to remove the mod.
+No PAK, DLL, or UE4SS installation is needed. Logs and status JSON are created in `logs` beside the launcher; `--output PATH` selects another directory. The previous standalone experimental data-asset intro packages did not skip logos in the reported test. After their game session exits, use their original uninstall tool before switching to this version.
 
-The four changes exist only in the launched process's memory and disappear
-when that process exits. The launcher does not patch the game executable or
-assets on disk and does not write saves; normal gameplay may update saves.
+## Scope and removal
+
+Startup skip takes the game's existing notice-completion path. It skips the CESA notice, publisher and middleware logos, manufacturer copyright, fiction disclaimer, and ACES movie. Campaign and gameplay cutscene routines are unchanged.
+
+The HUD changes are the same four comparison bytes as v0.1.1. They permit camera value 2 through the existing native pitch ladder, compass, speed/altitude tape, and aircraft reference mark updates. Camera selection and input bindings are unchanged.
+
+All five changes exist only in the launched game process's memory and disappear when it exits. The launcher does not edit installed game files or write saves; normal gameplay may update saves. To remove it, exit the game and launcher, then delete the extracted folder. Normal Steam launch uses the game's original startup and HUD behavior.
 
 ## Check and build
 
-These commands do not launch the game:
+These checks do not launch the game:
 
 ```powershell
-.\dist\v0.1.1\AC8ThirdPersonHUD.exe --verify
-.\dist\v0.1.1\AC8ThirdPersonHUD.exe --self-test
+.\dist\v0.2.0\AC8NoIntroHUD.exe --verify
+.\dist\v0.2.0\AC8NoIntroHUD.exe --self-test
 ```
 
-`--verify` reads the installed executable and checks its full hash, PE layout,
-Steam build, and all four instruction contexts. `--self-test` runs 13 checks
-against a synthetic child process, including rollback and page protections.
+`--verify` checks the installed executable and all five guarded instruction contexts. `--self-test` runs **21 synthetic cross-process checks**, including executed startup branch behavior, rollback, page protections, foreign-byte preservation, and HUD toggles that leave startup skip active.
 
-To compile the original source, install Visual Studio 2022 C++ Build Tools
-with the Windows SDK, then run from the repository root:
+To build, install Visual Studio 2022 C++ Build Tools with the Windows SDK, then run from the repository root:
 
 ```powershell
-.\scripts\build-launcher.ps1 -Test -Output .\outputs\AC8ThirdPersonHUD-rebuilt.exe
+.\scripts\build-launcher.ps1 -Test -Output .\build\AC8NoIntroHUD-rebuilt.exe
 ```
 
-The script expects the standard Visual Studio 2022 Build Tools installation
-path; edit `$devCommand` for a different installation. Compiler timestamps
-can make rebuilt binaries differ in hash.
+The script expects the standard Visual Studio 2022 Build Tools installation path; adjust `$devCommand` for another installation. Compiler timestamps may change rebuilt binary hashes.
 
-## Implementation and evidence
+[src/launcher.cpp](src/launcher.cpp) contains the implementation and synthetic tests. [docs/PATCHES.md](docs/PATCHES.md) describes the five bytes, and [CHANGELOG.md](CHANGELOG.md) records version changes. Users supply their own game; game binaries, assets, saves, machine-specific session logs, and third-party tools are excluded.
 
-[src/launcher.cpp](src/launcher.cpp) contains the launcher, checks, hotkey,
-transactional memory updates, and synthetic tests.
-[docs/PATCHES.md](docs/PATCHES.md) describes the four changes.
-[docs/VALIDATION.md](docs/VALIDATION.md) separates recorded observations,
-publication checks, and user-reported success.
-
-The camera getter can also return value 2 when context is missing. The original
-player and panel guards remain in place; replay, transitions, and rendering
-alignment need their own visual assessment.
-
-This repository contains the original mod source and launcher. Users supply
-their own game installation. Game binaries, assets, saves, local analysis
-copies, and third-party tools are excluded.
-
-References consulted during the original investigation:
-
-- [AC8 Mod Control](https://github.com/JustBlan1984/AC8-Mod-Control)
-- [AC8 UEVR UI fix](https://github.com/lovezzzxxx/ace-combat-8-uevr-ui-fix)
-- [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
+References from the original HUD investigation: [AC8 Mod Control](https://github.com/JustBlan1984/AC8-Mod-Control), [AC8 UEVR UI fix](https://github.com/lovezzzxxx/ace-combat-8-uevr-ui-fix), and [Ghidra](https://github.com/NationalSecurityAgency/ghidra).

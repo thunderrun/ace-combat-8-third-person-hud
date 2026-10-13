@@ -15,3 +15,4 @@ releases/
 *.uasset
 *.umap
 AceCombat8.exe
+/verification/

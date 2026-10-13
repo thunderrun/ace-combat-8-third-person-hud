@@ -1,14 +1,13 @@
 {
-  "mod_version": "0.1.1",
-  "publication_date_utc": "2026-10-13",
-  "mod_executable_sha256": "EAD79FB263A6D397476F9DB9207D15DC7E1687B3DBE49AAA8A80FAD9FDDA4725",
-  "source_sha256": "70A58DE2C76B37E15EA0E2F229B11464DBF300E6D519F732E8E89A039A56ED07",
-  "build_script_sha256": "2A0E3F935A43B77D6D12A52E2CE2CD920D14431B5A431BD9D21D2A9AF4064DC9",
-  "source_and_script_match_original_final_package": true,
+  "mod_version": "0.2.0",
+  "publication_date": "2026-10-13",
+  "mod_executable_sha256": "5880CC277A9A3D08F45A54E0170BEFD0FE21886A120DE74ECBA79880B1FAB3F1",
+  "source_lf_sha256": "09224EF25AEB1E2E2786D846C49B6D0D016D5B89D699895828F5D985BB47513F",
+  "build_script_lf_sha256": "02A35111F5BAB948EA8CA47C47D98F73DA31A2E7A4B0F667145E40C0FB37461B",
+  "source_and_script_match_tested_package_after_newline_normalization": true,
   "self_test": {
     "state": "self_test_passed",
-    "timestamp_utc": "20261013-072559",
-    "checks_passed": 13,
+    "checks_passed": 21,
     "checks": [
       "all 256 camera values: only mode 2 acceptance changes at each gate",
       "cross-process original context read",
@@ -19,30 +18,48 @@
       "48-byte guard rejects modified branch instruction",
       "injected write failure rolls back all bytes and page protections",
       "partial protection restore failure reopens restored RX pages and rolls back safely",
-      "four remote one-byte writes, exact readback, and page protection restoration",
+      "startup opcode plus four HUD writes, exact readback, and page protection restoration",
       "A/B disable transaction restores all original guarded contexts",
       "failure recovery preserves replacement bytes when surrounding code was rewritten",
-      "failure recovery restores owned bytes and preserves unexpected bytes"
+      "failure recovery restores owned bytes and preserves unexpected bytes",
+      "startup zero-CMP, JZ-to-JNO opcode, and unchanged native completion target verified",
+      "intro-only selects one byte; default mode selects intro plus four HUD bytes",
+      "HUD on/off transactions leave the enabled startup skip opcode unchanged",
+      "startup preflight rejects rewritten zero-CMP before any opcode write",
+      "startup recovery preserves an unknown third-party branch opcode",
+      "executed original JZ reaches completion only for zero notice count",
+      "executed patched JNO reaches completion for zero and all sampled nonzero counts",
+      "executed branch rollback restores original zero/nonzero behavior and RX protection"
     ],
     "game_launched": false
   },
   "installed_build_verification": {
     "state": "static_verified",
-    "timestamp_utc": "20261013-072559",
     "steam_build": "25201480",
     "game_executable_sha256": "51510E2A520565DBE81FB0D569E95CD4393077ACAAA859371489B80B8128829F",
-    "static_verified": true,
-    "memory_patch_active": false,
+    "instruction_contexts_checked": 5,
+    "startup_compare_zero_and_completion_target_checked": true,
     "game_launched": false
   },
-  "owner_report": {
+  "v0_2_0_runtime": {
     "date": "2026-10-13",
-    "in_game_success_reported": true,
-    "successful_launcher_version_independently_established": false
+    "title_observed": true,
+    "main_menu_observed": true,
+    "startup_logos_skipped_user_confirmed": true,
+    "startup_notice_patch_readback_active": true,
+    "four_hud_patch_readbacks_active": true,
+    "patch_readback_active_until_exit": true,
+    "normal_game_exit_code": 0,
+    "installed_executable_hash_unchanged": true,
+    "continuous_earliest_startup_footage_recorded": false,
+    "flight_hud_visual_verified": false,
+    "dynamic_telemetry_verified": false,
+    "alignment_sweeps_verified": false,
+    "campaign_transitions_verified": false,
+    "game_files_modified_by_launcher": false,
+    "saves_written_by_launcher": false
   },
-  "chase_view_gameplay_independently_observed_during_publication": true,
-  "independent_visual_observation_scope": "One Steam chase-view screenshot; no motion or alignment sweeps",
-  "followup_screenshot": {
+  "historical_v0_1_1_hud_screenshot": {
     "captured_at_utc": "2026-10-13T08:44:05Z",
     "steam_image_modified_at_utc": "2026-10-13T08:44:06Z",
     "launcher_version": "0.1.1",
@@ -78,7 +95,12 @@
     "mission_transitions_verified": false,
     "game_paused_after_capture": true
   },
-  "on_disk_game_files_modified_by_publication": false,
-  "original_project_or_installed_mod_replaced": false,
-  "security_settings_changed": false
+  "public_content_excludes": [
+    "local session logs",
+    "process IDs",
+    "personal filesystem paths",
+    "game binaries and cooked assets",
+    "saves",
+    "third-party toolchains"
+  ]
 }

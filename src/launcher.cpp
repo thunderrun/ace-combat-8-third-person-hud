@@ -26,7 +26,7 @@ constexpr char kExpectedHash[] = "51510E2A520565DBE81FB0D569E95CD4393077ACAAA859
 constexpr uint64_t kExpectedSize = 555102832;
 constexpr uint64_t kImageBase = 0x140000000;
 constexpr char kBuild[] = "25201480";
-constexpr char kVersion[] = "0.1.1";
+constexpr char kVersion[] = "0.2.0";
 
 struct Handle {
     HANDLE value = nullptr;
@@ -82,7 +82,7 @@ struct Report {
     fs::path game;
     std::string hash;
     DWORD pid = 0;
-    bool verified = false, patched = false;
+    bool verified = false, patched = false, introPatched = false, hudPatched = false;
     explicit Report(fs::path directory) : folder(std::move(directory)) {
         fs::create_directories(folder);
         log.open(folder / ("launcher-" + utcStamp() + "-" + std::to_string(GetCurrentProcessId()) + ".log"));
@@ -99,9 +99,12 @@ struct Report {
             << "\",\n  \"sha256\": \"" << hash << "\",\n  \"process_id\": " << pid
             << ",\n  \"static_verified\": " << (verified ? "true" : "false")
             << ",\n  \"memory_patch_active\": " << (patched ? "true" : "false")
+            << ",\n  \"startup_notice_patch_active\": " << (introPatched ? "true" : "false")
+            << ",\n  \"hud_patch_active\": " << (hudPatched ? "true" : "false")
             << ",\n  \"visual_runtime_verified\": false,\n  \"on_disk_game_files_modified\": false,\n  \"saves_modified_by_launcher\": false\n}\n";
     }
 };
+
 std::vector<uint8_t> hexBytes(const char* text) {
     std::istringstream in(text); std::vector<uint8_t> out; unsigned x;
     while (in >> std::hex >> x) out.push_back(uint8_t(x));
@@ -115,6 +118,26 @@ const std::vector<Site> kSites = {
     {"whisky_mark", 0x72F0576, 0x72F0587, 1, 2, hexBytes("20 49 8b ce e8 e1 5f 62 00 49 8b 8e 58 04 00 00 3c 01 b2 04 48 8b 01 76 02 b2 01 ff 90 c8 02 00 00 49 8b ce e8 a1 0f 00 00 49 8b 06 49 8b ce ff")}
 };
 
+const std::vector<Site> kIntroSites = {
+    {"startup_notice_empty_array_branch",0x07B4EFF9,0x07B4F018,0x84,0x81,
+     hexBytes("E8 C2 12 B9 F9 49 83 C6 30 48 83 C5 30 4D 3B F7 75 A5 48 8B 5C 24 20 83 BE F8 06 00 00 00 0F 84 BA 00 00 00 8B 46 08 C1 E8 1E F6 D0 A8 01 74 6D")}
+};
+std::vector<Site> startupSites(bool hudEnabled) {
+    auto sites=kIntroSites;if(hudEnabled)sites.insert(sites.end(),kSites.begin(),kSites.end());return sites;
+}
+void verifyIntroSemantics() {
+    const auto& site=kIntroSites.front();size_t i=site.patchRva-site.guardRva;
+    require(i==31&&site.guard.size()==48&&site.original==0x84&&site.replacement==0x81,"Unexpected startup branch patch layout.");
+    const auto compare=hexBytes("83 BE F8 06 00 00 00");
+    require(std::equal(compare.begin(),compare.end(),site.guard.begin()+23)&&site.guard[i-1]==0x0f&&site.guard[i]==0x84,"Startup JZ is not immediately preceded by CMP count,0.");
+    int32_t relative=0;memcpy(&relative,site.guard.data()+i+1,sizeof(relative));
+    require(int64_t(site.patchRva-1)+6+relative==0x07B4F0D7,"Unexpected startup completion branch target.");
+    // CMP x,0 computes x-0=x. The signed-overflow expression is zero for all x.
+    for(uint32_t x:{0u,1u,2u,0x7fffffffu,0x80000000u,0xffffffffu}) {
+        uint32_t result=x-0u;bool overflow=((x^0u)&(x^result)&0x80000000u)!=0;
+        require(!overflow,"CMP count,0 unexpectedly set the overflow flag.");
+    }
+}
 std::vector<uint8_t> fileRead(HANDLE file, uint64_t offset, size_t size) {
     LARGE_INTEGER pos{}; pos.QuadPart = offset;
     winCheck(SetFilePointerEx(file, pos, nullptr, FILE_BEGIN)!=FALSE,"File seek failed");
@@ -154,7 +177,7 @@ PEInfo filePE(HANDLE file) {
     require(dos.e_magic==IMAGE_DOS_SIGNATURE && dos.e_lfanew>0 && dos.e_lfanew<0x100000, "Invalid DOS/PE header.");
     PEInfo pe{}; pe.header=fileStruct<IMAGE_NT_HEADERS64>(file,dos.e_lfanew);
     require(pe.header.Signature==IMAGE_NT_SIGNATURE && pe.header.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64 && pe.header.OptionalHeader.Magic==IMAGE_NT_OPTIONAL_HDR64_MAGIC, "Requires a Windows AMD64 PE image.");
-    require(pe.header.OptionalHeader.ImageBase==kImageBase && pe.header.OptionalHeader.SizeOfImage>0x72F1600, "Unexpected executable PE layout.");
+    require(pe.header.OptionalHeader.ImageBase==kImageBase && pe.header.OptionalHeader.SizeOfImage>0x07B4F040, "Unexpected executable PE layout.");
     require(pe.header.FileHeader.NumberOfSections>0 && pe.header.FileHeader.NumberOfSections<100, "Invalid PE section count.");
     auto offset=uint64_t(dos.e_lfanew)+24+pe.header.FileHeader.SizeOfOptionalHeader;
     for (unsigned i=0;i<pe.header.FileHeader.NumberOfSections;i++) pe.sections.push_back(fileStruct<IMAGE_SECTION_HEADER>(file,offset+i*sizeof(IMAGE_SECTION_HEADER)));
@@ -185,9 +208,10 @@ void verifyFile(HANDLE file, const fs::path& game, Report& report) {
     require(uint64_t(size.QuadPart)==kExpectedSize,"Unsupported executable size.");
     report.line("Computing full executable SHA256..."); report.hash=sha256(file); hashGuard(report.hash);
     auto pe=filePE(file);
-    for (auto& site:kSites) require(fileRead(file,rawOffset(pe,site.guardRva,site.guard.size()),site.guard.size())==site.guard,std::string("On-disk context mismatch: ")+site.name);
+    verifyIntroSemantics();
+    for (auto& site:startupSites(true)) require(fileRead(file,rawOffset(pe,site.guardRva,site.guard.size()),site.guard.size())==site.guard,std::string("On-disk context mismatch: ")+site.name);
     verifyBuildManifest(game,report); report.verified=true;
-    report.line("Exact executable SHA256, x64 PE layout, and all four 48-byte gate contexts verified.");
+    report.line("Exact executable SHA256, x64 PE layout, startup CMP/JZ completion target, and four HUD gate contexts verified.");
 }
 
 std::vector<uint8_t> remoteRead(HANDLE process, uintptr_t address, size_t size) {
@@ -269,7 +293,7 @@ void transaction(HANDLE process,uintptr_t base,const std::vector<Site>& sites,bo
         throw std::runtime_error(message+(rolledBack?" Rollback verified; page protections restored.":" CRITICAL: rollback or page-protection restoration could not be verified."));
     }
 }
-// Failure recovery owns only the four known replacement bytes. Never overwrite unknown bytes.
+// Failure recovery owns only the selected known replacement bytes. Never overwrite unknown bytes.
 bool ownedRollback(HANDLE process,uintptr_t base,const std::vector<Site>& sites,std::string& detail) {
     ProtectionScope protection(process); bool ok=true;
     try {
@@ -337,7 +361,7 @@ uintptr_t suspendedImageBase(HANDLE process,HANDLE thread) {
     auto dosBytes=remoteRead(process,base,sizeof(IMAGE_DOS_HEADER));IMAGE_DOS_HEADER dos{};memcpy(&dos,dosBytes.data(),sizeof(dos));
     require(dos.e_magic==IMAGE_DOS_SIGNATURE&&dos.e_lfanew>0&&dos.e_lfanew<0x100000,"Child DOS header invalid.");
     auto ntBytes=remoteRead(process,base+dos.e_lfanew,sizeof(IMAGE_NT_HEADERS64));IMAGE_NT_HEADERS64 nt{};memcpy(&nt,ntBytes.data(),sizeof(nt));
-    require(nt.Signature==IMAGE_NT_SIGNATURE&&nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64&&nt.OptionalHeader.ImageBase==kImageBase&&nt.OptionalHeader.SizeOfImage>0x72F1600,"Child PE image mismatch.");
+    require(nt.Signature==IMAGE_NT_SIGNATURE&&nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64&&nt.OptionalHeader.ImageBase==kImageBase&&nt.OptionalHeader.SizeOfImage>0x07B4F040,"Child PE image mismatch.");
     PROCESS_PROTECTION_LEVEL_INFORMATION protection{};
     winCheck(GetProcessInformation(process,ProcessProtectionLevelInfo,&protection,sizeof(protection))!=FALSE,"Cannot query child process protection");
     require(protection.ProtectionLevel==PROTECTION_LEVEL_NONE,"Refusing a protected child process.");
@@ -357,82 +381,113 @@ std::vector<wchar_t> childEnvironment() {
     for(auto& e:entries){block.insert(block.end(),e.begin(),e.end());block.push_back(0);}block.push_back(0);return block;
 }
 
-int launchGame(const fs::path& game,Report& report) {
+int launchGame(const fs::path& game,Report& report,bool hudEnabled) {
+    // Keep a per-game mutex for this complete child lifetime. A second double-click
+    // must fail before creating a second suspended game.
+    std::wstring mutexName=L"Local\\AC8NoIntroHUD-"+lower(fs::absolute(game).wstring());
+    std::replace(mutexName.begin()+6,mutexName.end(),L'\\',L'_');
+    Handle operationMutex(CreateMutexW(nullptr,FALSE,mutexName.c_str()));require(operationMutex.valid(),"Cannot create launch-operation mutex.");
+    DWORD locked=WaitForSingleObject(operationMutex,0);require(locked==WAIT_OBJECT_0||locked==WAIT_ABANDONED,"Another AC8 No Intro/HUD launcher already owns this game startup.");
+    struct ReleaseMutexScope{HANDLE value;~ReleaseMutexScope(){ReleaseMutex(value);}}releaseMutex{operationMutex};
     processPreflight();
+    auto sites=startupSites(hudEnabled);
     auto environment=childEnvironment();std::wstring command=L"\""+game.wstring()+L"\" -SaveToUserDir";
     STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION pi{};
     winCheck(CreateProcessW(game.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_SUSPENDED|CREATE_UNICODE_ENVIRONMENT,environment.data(),game.parent_path().c_str(),&startup,&pi)!=FALSE,"CreateProcessW failed");
     Handle process(pi.hProcess),thread(pi.hThread);report.pid=pi.dwProcessId;uintptr_t base=0;bool resumed=false;
     try {
         base=suspendedImageBase(process,thread);moduleGuard(pi.dwProcessId,true);
-        transaction(process,base,kSites,true);report.patched=true;
+        transaction(process,base,sites,true);report.introPatched=true;report.hudPatched=hudEnabled;report.patched=true;
         winCheck(ResumeThread(thread)!=DWORD(-1),"ResumeThread failed");resumed=true;
-        report.line("Child resumed with four verified memory-only immediate changes. Use offline/campaign mode.");
-        report.line("Keep this launcher open. Ctrl+Alt+F8 while the game is foreground toggles the HUD gates for A/B testing.");
-        report.status("running_patched","Memory patches verified; visual HUD behavior still requires in-game validation.");
+        report.line(hudEnabled?"Child resumed with startup notice skip and four HUD gates verified in memory.":"Child resumed with startup notice skip only; HUD gates remain original.");
+        report.line("Use offline/campaign mode and keep this launcher open.");
+        if(hudEnabled)report.line("Ctrl+Alt+F8 while the game is foreground toggles only the four HUD gates; startup skip remains active.");
+        report.status(hudEnabled?"running_intro_and_hud":"running_intro_only","Memory readback verified. Startup skip and visual HUD behavior require in-game validation.");
         constexpr int hotkeyId=0xAC8;
-        bool hotkeyRegistered=RegisterHotKey(nullptr,hotkeyId,MOD_CONTROL|MOD_ALT|MOD_NOREPEAT,VK_F8)!=FALSE;
+        bool hotkeyRegistered=hudEnabled&&RegisterHotKey(nullptr,hotkeyId,MOD_CONTROL|MOD_ALT|MOD_NOREPEAT,VK_F8)!=FALSE;
         struct HotkeyScope {bool active;int id;~HotkeyScope(){if(active)UnregisterHotKey(nullptr,id);}}hotkeyScope{hotkeyRegistered,hotkeyId};
-        if(!hotkeyRegistered)report.line("Ctrl+Alt+F8 is already registered elsewhere; using key-state polling fallback (hold for at least 0.2 seconds). Windows error "+std::to_string(GetLastError()));
+        if(hudEnabled&&!hotkeyRegistered)report.line("Ctrl+Alt+F8 is already registered elsewhere; using key-state polling fallback (hold for at least 0.2 seconds). Windows error "+std::to_string(GetLastError()));
         bool keyWasDown=false;ULONGLONG nextCheck=GetTickCount64();
         for(;;) {
             auto wait=WaitForSingleObject(process,100);
             if(wait==WAIT_OBJECT_0) break;
             require(wait==WAIT_TIMEOUT,"Waiting for game process failed.");
             bool key=false,toggleRequested=false;
-            if(hotkeyRegistered) {
+            if(hudEnabled&&hotkeyRegistered) {
                 MSG message{};
                 while(PeekMessageW(&message,nullptr,WM_HOTKEY,WM_HOTKEY,PM_REMOVE))if(message.wParam==hotkeyId)toggleRequested=true;
-            }else {
+            }else if(hudEnabled) {
                 key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F8)&0x8000);
                 toggleRequested=key&&!keyWasDown;
             }
             if(toggleRequested) {
                 DWORD foregroundPid=0;GetWindowThreadProcessId(GetForegroundWindow(),&foregroundPid);
                 if(foregroundPid==pi.dwProcessId) {
-                    moduleGuard(pi.dwProcessId);transaction(process,base,kSites,!report.patched);report.patched=!report.patched;
-                    report.line(report.patched?"HUD gate patch enabled; four contexts verified.":"HUD gate patch disabled; original contexts verified.");
-                    report.status(report.patched?"running_patched":"running_original","Ctrl+Alt+F8 toggle completed with exact memory readback.");
+                    moduleGuard(pi.dwProcessId);transaction(process,base,kSites,!report.hudPatched);report.hudPatched=!report.hudPatched;
+                    verifyRemote(process,base,kIntroSites,true);report.patched=report.introPatched||report.hudPatched;
+                    report.line(report.hudPatched?"HUD gates enabled; startup skip remains active.":"HUD gates disabled; startup skip remains active.");
+                    report.status(report.hudPatched?"running_intro_and_hud":"running_intro_only","Ctrl+Alt+F8 changed only four HUD bytes with exact readback.");
                 }
             }
             keyWasDown=key;
             if(GetTickCount64()>=nextCheck) {
                 if(WaitForSingleObject(process,0)==WAIT_OBJECT_0) break;
-                moduleGuard(pi.dwProcessId);verifyRemote(process,base,kSites,report.patched);nextCheck=GetTickCount64()+1000;
+                moduleGuard(pi.dwProcessId);verifyRemote(process,base,kIntroSites,true);
+                if(hudEnabled)verifyRemote(process,base,kSites,report.hudPatched);
+                nextCheck=GetTickCount64()+1000;
             }
         }
-        DWORD exitCode=0;GetExitCodeProcess(process,&exitCode);report.patched=false;
+        DWORD exitCode=0;GetExitCodeProcess(process,&exitCode);report.patched=false;report.introPatched=false;report.hudPatched=false;
         report.line("Game process exited with code "+std::to_string(exitCode)+". On-disk game files were unchanged.");
-        report.status("game_exited","Game exit code "+std::to_string(exitCode)+"; visual runtime verification remains manual.");return 0;
+        report.status("game_exited","Game exit code "+std::to_string(exitCode)+"; runtime behavior verification remains manual.");return 0;
     }catch(const std::exception& e) {
         std::string detail=e.what();
         if(!resumed) {
-            if(base&&report.patched){std::string recovery;ownedRollback(process,base,kSites,recovery);}
-            TerminateProcess(process,1);WaitForSingleObject(process,5000);report.patched=false;
+            if(base&&report.patched){std::string recovery;ownedRollback(process,base,sites,recovery);}
+            TerminateProcess(process,1);WaitForSingleObject(process,5000);report.patched=false;report.introPatched=false;report.hudPatched=false;
             detail+=" Suspended startup child stopped before gameplay.";
-        }else if(WaitForSingleObject(process,0)==WAIT_OBJECT_0){report.patched=false;detail+=" Child already exited.";}
+        }else if(WaitForSingleObject(process,0)==WAIT_OBJECT_0){report.patched=false;report.introPatched=false;report.hudPatched=false;detail+=" Child already exited.";}
         else {
-            std::string recovery;bool recovered=ownedRollback(process,base,kSites,recovery);
-            report.patched=!recovered;detail+=recovered?" Owned patch bytes restored to original; game left running.":" Patch rollback could not be fully verified; game left running. Close the game manually.";
+            std::string recovery;bool recovered=ownedRollback(process,base,sites,recovery);
+            if(recovered){report.patched=false;report.introPatched=false;report.hudPatched=false;}
+            else {
+                // A remaining bit means restoration was not established, rather
+                // than asserting that unknown external code is our replacement.
+                report.patched=true;
+            }
+            detail+=recovered?" Owned patch bytes restored to original; game left running.":" Patch rollback could not be fully verified; game left running. Close the game manually.";
             if(!recovery.empty()) detail+=" "+recovery;
         }
         report.line("STOPPED: "+detail);report.status("monitor_or_startup_failure",detail);return 1;
     }
 }
 
-struct TestIPC { uintptr_t base; LONG ready; };
+struct TestIPC { uintptr_t base; LONG ready,request,completed; uint32_t count; int result; };
+const uint32_t kSyntheticBranchRva=0x3100;
+std::vector<Site> syntheticBranchSites() {
+    return {{"executed_startup_count_branch",kSyntheticBranchRva,kSyntheticBranchRva+4,0x84,0x81,
+             hexBytes("83 F9 00 0F 84 06 00 00 00 B8 00 00 00 00 C3 B8 01 00 00 00 C3")}};
+}
 std::vector<Site> testSites() {
     auto sites=kSites;const uint32_t offsets[]={0x100,0x1100,0x2100,0x2200};
-    for(size_t i=0;i<sites.size();i++){sites[i].guardRva=offsets[i];sites[i].patchRva=offsets[i]+17;}return sites;
+    for(size_t i=0;i<sites.size();i++){sites[i].guardRva=offsets[i];sites[i].patchRva=offsets[i]+17;}
+    auto intro=kIntroSites.front();intro.guardRva=0x2A00;intro.patchRva=intro.guardRva+31;sites.push_back(intro);return sites;
 }
 int testChild(const wchar_t* mappingName) {
     Handle map(OpenFileMappingW(FILE_MAP_ALL_ACCESS,FALSE,mappingName));if(!map.valid())return 20;
     auto ipc=static_cast<TestIPC*>(MapViewOfFile(map,FILE_MAP_ALL_ACCESS,0,0,sizeof(TestIPC)));if(!ipc)return 21;
     auto memory=static_cast<uint8_t*>(VirtualAlloc(nullptr,0x4000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));if(!memory)return 22;
     for(auto& s:testSites())memcpy(memory+s.guardRva,s.guard.data(),s.guard.size());
+    for(auto& s:syntheticBranchSites())memcpy(memory+s.guardRva,s.guard.data(),s.guard.size());
     DWORD old=0;if(!VirtualProtect(memory,0x4000,PAGE_EXECUTE_READ,&old))return 23;
     ipc->base=reinterpret_cast<uintptr_t>(memory);InterlockedExchange(&ipc->ready,1);
-    Sleep(INFINITE);return 0;
+    using BranchFunction=int(__fastcall*)(uint32_t);
+    auto branch=reinterpret_cast<BranchFunction>(memory+kSyntheticBranchRva);LONG seen=0;
+    for(;;) {
+        LONG request=InterlockedCompareExchange(&ipc->request,0,0);
+        if(request!=seen){ipc->result=branch(ipc->count);InterlockedExchange(&ipc->completed,request);seen=request;}
+        Sleep(1);
+    }
 }
 DWORD pageProtection(HANDLE process,uintptr_t address) {
     MEMORY_BASIC_INFORMATION mb{};require(VirtualQueryEx(process,reinterpret_cast<LPCVOID>(address),&mb,sizeof(mb))==sizeof(mb),"Test VirtualQueryEx failed.");return mb.Protect;
@@ -445,7 +500,7 @@ int selfTest(Report& report) {
     auto name=L"Local\\AC8HUDTest-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
     Handle map(CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(TestIPC),name.c_str()));require(map.valid(),"Self-test mapping failed.");
     auto ipc=static_cast<TestIPC*>(MapViewOfFile(map,FILE_MAP_ALL_ACCESS,0,0,sizeof(TestIPC)));require(ipc!=nullptr,"Self-test mapping view failed.");
-    struct Unmap {void* p;~Unmap(){UnmapViewOfFile(p);}}unmap{ipc};ipc->base=0;ipc->ready=0;
+    struct Unmap {void* p;~Unmap(){UnmapViewOfFile(p);}}unmap{ipc};ipc->base=0;ipc->ready=0;ipc->request=0;ipc->completed=0;ipc->count=0;ipc->result=0;
     auto own=ownPath();std::wstring command=L"\""+own.wstring()+L"\" --test-child \""+name+L"\"";
     STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION pi{};
     require(CreateProcessW(own.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,own.parent_path().c_str(),&startup,&pi),"Self-test child creation failed.");
@@ -494,7 +549,7 @@ int selfTest(Report& report) {
     pass("partial protection restore failure reopens restored RX pages and rolls back safely");
     transaction(process,base,sites,true);verifyRemote(process,base,sites,true);
     for(auto& s:sites)require(pageProtection(process,base+s.patchRva)==PAGE_EXECUTE_READ,"Success did not restore page protection.");
-    pass("four remote one-byte writes, exact readback, and page protection restoration");
+    pass("startup opcode plus four HUD writes, exact readback, and page protection restoration");
     transaction(process,base,sites,false);verifyRemote(process,base,sites,false);pass("A/B disable transaction restores all original guarded contexts");
     transaction(process,base,sites,true);corruptTestByte(process,base+sites[0].guardRva,0x7f);
     std::string contextDetail;require(!ownedRollback(process,base,sites,contextDetail),"Owned rollback accepted changed surrounding instructions.");
@@ -508,6 +563,43 @@ int selfTest(Report& report) {
     require(remoteRead(process,base+sites[1].patchRva,1)[0]==0x7f,"Owned rollback overwrote an unknown byte.");
     for(size_t i:{size_t(0),size_t(2),size_t(3)})require(remoteRead(process,base+sites[i].patchRva,1)[0]==sites[i].original,"Owned rollback failed at known replacement.");
     pass("failure recovery restores owned bytes and preserves unexpected bytes");
+    corruptTestByte(process,base+sites[1].patchRva,sites[1].original);verifyRemote(process,base,sites,false);
+
+    verifyIntroSemantics();pass("startup zero-CMP, JZ-to-JNO opcode, and unchanged native completion target verified");
+    require(startupSites(false).size()==1&&startupSites(true).size()==5,"--no-hud selection includes unexpected patches.");
+    pass("intro-only selects one byte; default mode selects intro plus four HUD bytes");
+    std::vector<Site> intro={sites.back()},hud(sites.begin(),sites.begin()+4);
+    transaction(process,base,intro,true);verifyRemote(process,base,intro,true);verifyRemote(process,base,hud,false);
+    transaction(process,base,hud,true);verifyRemote(process,base,intro,true);verifyRemote(process,base,hud,true);
+    transaction(process,base,hud,false);verifyRemote(process,base,intro,true);verifyRemote(process,base,hud,false);
+    transaction(process,base,intro,false);pass("HUD on/off transactions leave the enabled startup skip opcode unchanged");
+
+    corruptTestByte(process,base+intro.front().guardRva+29,1);
+    expectFailure([&]{transaction(process,base,intro,true);},"startup nonzero CMP immediate");
+    require(remoteRead(process,base+intro.front().patchRva,1)[0]==0x84,"Startup preflight wrote before detecting a changed CMP.");
+    corruptTestByte(process,base+intro.front().guardRva+29,0);pass("startup preflight rejects rewritten zero-CMP before any opcode write");
+    transaction(process,base,intro,true);corruptTestByte(process,base+intro.front().patchRva,0x85);
+    std::string introRecovery;require(!ownedRollback(process,base,intro,introRecovery),"Startup recovery accepted a foreign opcode.");
+    require(remoteRead(process,base+intro.front().patchRva,1)[0]==0x85,"Startup recovery overwrote a foreign opcode.");
+    corruptTestByte(process,base+intro.front().patchRva,0x84);pass("startup recovery preserves an unknown third-party branch opcode");
+
+    auto executed=syntheticBranchSites();LONG request=0;
+    auto runBranch=[&](uint32_t count) {
+        ipc->count=count;InterlockedExchange(&ipc->request,++request);
+        for(int retry=0;retry<1000&&InterlockedCompareExchange(&ipc->completed,0,0)!=request;retry++) {
+            require(WaitForSingleObject(process,0)==WAIT_TIMEOUT,"Synthetic branch child exited unexpectedly.");Sleep(1);
+        }
+        require(InterlockedCompareExchange(&ipc->completed,0,0)==request,"Synthetic branch execution timed out.");return ipc->result;
+    };
+    const uint32_t counts[]={0u,1u,2u,7u,0x7fffffffu,0x80000000u,0xffffffffu};
+    for(auto count:counts)require(runBranch(count)==(count==0?1:0),"Original synthetic JZ selected the wrong path.");
+    pass("executed original JZ reaches completion only for zero notice count");
+    transaction(process,base,executed,true);verifyRemote(process,base,executed,true);
+    for(auto count:counts)require(runBranch(count)==1,"Patched synthetic JNO did not always reach completion.");
+    pass("executed patched JNO reaches completion for zero and all sampled nonzero counts");
+    transaction(process,base,executed,false);
+    for(auto count:counts)require(runBranch(count)==(count==0?1:0),"Synthetic branch rollback did not restore original JZ behavior.");
+    pass("executed branch rollback restores original zero/nonzero behavior and RX protection");
     report.line(std::to_string(passed)+" synthetic cross-process checks passed. The game was not launched.");
     report.status("self_test_passed",std::to_string(passed)+" synthetic checks passed; game was not launched.");return 0;
 }
@@ -515,11 +607,12 @@ int selfTest(Report& report) {
 int wmain(int argc,wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     if(argc==3&&std::wstring(argv[1])==L"--test-child")return testChild(argv[2]);
-    fs::path game=kDefaultGame;fs::path output=ownPath().parent_path()/L"logs";bool verifyOnly=false,test=false,help=false;
+    fs::path game=kDefaultGame;fs::path output=ownPath().parent_path()/L"logs";bool verifyOnly=false,test=false,help=false,hudEnabled=true;
     try {
         for(int i=1;i<argc;i++) {
             std::wstring arg=argv[i];
             if(arg==L"--verify")verifyOnly=true;
+            else if(arg==L"--no-hud")hudEnabled=false;
             else if(arg==L"--self-test")test=true;
             else if(arg==L"--help"||arg==L"-h")help=true;
             else if(arg==L"--game"&&i+1<argc)game=argv[++i];
@@ -527,23 +620,24 @@ int wmain(int argc,wchar_t** argv) {
             else throw std::runtime_error("Unknown or incomplete argument: "+utf8(arg));
         }
         if(help) {
-            std::cout << "AC8 HUD Launcher " << kVersion << " (Windows x64, offline/campaign prototype)\n"
-                "No arguments: verify supported installed game, start suspended, patch four memory bytes, monitor until exit.\n"
+            std::cout << "AC8 No Intro + HUD Launcher " << kVersion << " (Windows x64, offline/campaign prototype)\n"
+                "No arguments: verify supported game, start suspended, skip startup notices and enable HUD, monitor until exit.\n"
+                "--no-hud     Skip startup notices without changing HUD gates or registering the HUD hotkey.\n"
                 "--verify     Read-only full-file and instruction verification; never launch game.\n"
                 "--self-test  Exercise remote transactions against synthetic child; never launch game.\n"
                 "--game PATH  Override game executable; exact supported SHA256 is still required.\n"
                 "--output DIR Store this launcher's log/status files in DIR (default: logs beside launcher).\n"
-                "Ctrl+Alt+F8  Enable/disable gates while game is foreground and launcher remains open.\n";return 0;
+                "Ctrl+Alt+F8  Toggle only the four HUD gates while game is foreground; startup skip stays active.\n";return 0;
         }
         Report report(fs::absolute(output));report.game=fs::absolute(game);
         try {
-            report.line(std::string("AC8 HUD Launcher ")+kVersion+" | supported Steam build "+kBuild);
+            report.line(std::string("AC8 No Intro + HUD Launcher ")+kVersion+" | supported Steam build "+kBuild);
             if(test){require(!verifyOnly,"Use --self-test and --verify separately.");return selfTest(report);}
             Handle file(CreateFileW(report.game.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr));
             winCheck(file.valid(),"Cannot open game executable for read-only verification");
             verifyFile(file,report.game,report);
-            if(verifyOnly){report.status("static_verified","Read-only executable and all four instruction contexts verified; game was not launched.");return 0;}
-            return launchGame(report.game,report);
+            if(verifyOnly){report.status("static_verified","Read-only executable, startup completion branch, and four HUD contexts verified; game was not launched.");return 0;}
+            return launchGame(report.game,report,hudEnabled);
         }catch(const std::exception& e){report.line(std::string("FAILED: ")+e.what());report.status("failed",e.what());return 1;}
     }catch(const std::exception& e){std::cerr<<"FAILED: "<<e.what()<<std::endl;return 1;}
 }
