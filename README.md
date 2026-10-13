@@ -4,9 +4,15 @@ A Windows x64 launcher that keeps the game's native first-person flight
 instruments updating in third-person chase view: pitch ladder, compass,
 speed/altitude tapes, and aircraft reference mark.
 
-The project owner reports that the mod works in game. The recorded automated
-and earlier live-session checks have a narrower scope; see
-[validation](docs/VALIDATION.md) for the evidence and version differences.
+The screenshot below was captured in Free Flight on 2026-10-13 using v0.1.1
+on the supported Steam build. It shows the F/A-18C in third-person chase view
+with the pitch ladder, compass, speed/altitude tapes, and aircraft reference
+mark visible. See [validation](docs/VALIDATION.md) for the recorded checks
+and remaining visual tests.
+
+![F/A-18C in third-person chase view with the native flight HUD enabled](docs/images/third-person-hud.jpg)
+
+*Free Flight, San Salvacion North Coast. Original 3840 × 2160 Steam screenshot.*
 
 ## Compatibility
 
